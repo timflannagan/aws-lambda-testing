@@ -84,11 +84,11 @@ create_lambda_function() {
 
 # Create AWS credentials secret for KGateway
 create_aws_secret() {
-  kubectl create namespace httpbin || true
+  kubectl create namespace httpbin > /dev/null 2>&1 || true
   kubectl -n httpbin create secret generic aws-secret \
     --from-literal=accessKey=test \
     --from-literal=secretKey=test \
-    --from-literal=sessionToken=test || true
+    --from-literal=sessionToken=test 2>/dev/null || true
 }
 
 # Main execution
