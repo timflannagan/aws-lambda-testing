@@ -2,15 +2,9 @@ exports.handler = async (event) => {
   console.log('Received event:', JSON.stringify(event, null, 2));
 
   try {
-    // Parse the body if it's a string
-    let body = event.body;
-    if (typeof body === 'string') {
-      body = JSON.parse(body);
-    }
-
-    // Get numbers from the body
-    const num1 = parseInt(body.num1);
-    const num2 = parseInt(body.num2);
+    // Get numbers from the request
+    const num1 = parseInt(event.num1);
+    const num2 = parseInt(event.num2);
 
     // Calculate sum
     const sum = num1 + num2;
