@@ -8,6 +8,18 @@ This directory contains scripts and configuration for testing AWS Lambda functio
 - kubectl configured to use the kind cluster
 - Helm installed
 - AWS CLI installed
+- AWS credentials configured for LocalStack:
+  ```bash
+  # Configure AWS CLI with dummy credentials for LocalStack
+  aws configure set aws_access_key_id test
+  aws configure set aws_secret_access_key test
+  aws configure set region us-east-1
+
+  # Optional: Set up a separate profile for LocalStack
+  aws configure set aws_access_key_id test --profile localstack
+  aws configure set aws_secret_access_key test --profile localstack
+  aws configure set region us-east-1 --profile localstack
+  ```
 
 ## Setup
 
