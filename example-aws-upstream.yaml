@@ -1,0 +1,42 @@
+apiVersion: gateway.kusk.io/v1alpha1
+kind: API
+metadata:
+  name: aws-lambda-test
+  namespace: httpbin
+spec:
+  fleet:
+    name: aws-lambda-test
+  gateway:
+    name: kusk-gateway-envoy-fleet
+  upstream:
+    service:
+      name: localstack
+      namespace: localstack
+      port: 31566
+    aws:
+      region: us-east-1
+      credentials:
+        static:
+          secretRef:
+            name: aws-secret
+            namespace: httpbin
+      lambda:
+        function_name: tim-test
+        qualifier: $LATEST
+  paths:
+    /tim-test:
+      post:
+        x-kusk:
+          upstream:
+            aws:
+              lambda:
+                function_name: tim-test
+                qualifier: $LATEST
+    /echo-test:
+      post:
+        x-kusk:
+          upstream:
+            aws:
+              lambda:
+                function_name: echo-test
+                qualifier: $LATEST
