@@ -1,143 +1,138 @@
-# AWS Lambda Testing with LocalStack
+# AWS Lambda Testing
 
-This directory contains scripts and configuration for testing AWS Lambda functionality using LocalStack in a kind cluster. This setup is particularly useful for developing and testing the KGateway AWS Lambda integration without requiring access to real AWS resources.
-
-## Prerequisites
-
-- kind cluster running
-- kubectl configured to use the kind cluster
-- Helm installed
-- AWS CLI installed
+This directory contains scripts and configuration for testing the KGateway AWS Lambda integration using LocalStack.
 
 ## Setup
 
-1. Configure AWS credentials for LocalStack:
+1. Run the setup script to create the test environment:
+
+    ```bash
+    ./setup-localstack.sh
+    ```
+
+    This will:
+    - Install LocalStack in your kind cluster
+    - Create test Lambda functions (tim-test and echo-test)
+    - Create AWS credentials secret for KGateway
+
+2. Apply the KGateway configuration:
+
+    ```bash
+    kubectl apply -f ../../examples/example-aws-upstream.yaml
+    ```
+
+## Testing
+
+### Direct Lambda Testing
+
+Test the Lambda functions directly through LocalStack:
 
 ```bash
-# Configure AWS CLI with dummy credentials for LocalStack
-aws configure set aws_access_key_id test
-aws configure set aws_secret_access_key test
-aws configure set region us-east-1
+# Get the LocalStack endpoint
+export NODE_PORT=$(kubectl get --namespace "localstack" -o jsonpath="{.spec.ports[0].nodePort}" services localstack)
+export NODE_IP=$(kubectl get nodes --namespace "localstack" -o jsonpath="{.items[0].status.addresses[0].address}")
+export ENDPOINT=http://$NODE_IP:$NODE_PORT
 
-# Optional: Set up a separate profile for LocalStack
-aws configure set aws_access_key_id test --profile localstack
-aws configure set aws_secret_access_key test --profile localstack
-aws configure set region us-east-1 --profile localstack
+# Test the tim-test function (adds two numbers)
+aws --endpoint-url $ENDPOINT \
+  --cli-binary-format raw-in-base64-out \
+  lambda invoke \
+  --function-name tim-test \
+  --payload '{"num1": "10", "num2": "20"}' \
+  output.txt
+
+# Test the echo-test function (echoes back the request)
+aws --endpoint-url $ENDPOINT \
+  --cli-binary-format raw-in-base64-out \
+  lambda invoke \
+  --function-name echo-test \
+  --payload '{"test": "value"}' \
+  output.txt
 ```
 
-2. Run the setup script:
+### Testing via KGateway
 
-```bash
-./setup-localstack.sh
-```
+1. Port-forward the KGateway proxy:
 
-This will:
+    ```bash
+    # Find an available port if 8080 is in use
+    kubectl -n kgateway-system port-forward deploy/gloo-proxy-http 8080:8080
+    ```
 
-- Create a namespace for LocalStack
-- Install LocalStack via Helm
-- Create test Lambda functions
+2. Test the endpoints:
 
-## Test Functions
+    ```bash
+    # Test tim-test function (adds two numbers)
+    curl -X POST -H "Host: www.example.com" \
+      -H "Content-Type: application/json" \
+      -d '{"num1": "10", "num2": "20"}' \
+      localhost:8080/lambda/1
+
+    # Test echo-test function
+    curl -X POST -H "Host: www.example.com" \
+      -H "Content-Type: application/json" \
+      -d '{"test": "value"}' \
+      localhost:8080/lambda/2
+    ```
+
+## Function Details
 
 ### tim-test
 
 A simple function that adds two numbers:
 
-```bash
-# Test the function directly via LocalStack
-aws --endpoint-url http://localhost:31566 lambda invoke \
-  --function-name tim-test \
-  --cli-binary-format raw-in-base64-out \
-  --payload '{"num1": "10", "num2": "20"}' \
-  output.txt
-
-# Test via KGateway (after setting up the Upstream and HTTPRoute)
-curl -X POST -H "Host: www.example.com" \
-  -H "Content-Type: application/json" \
-  -d '{"num1": "10", "num2": "20"}' \
-  localhost:8080/lambda/1
+```javascript
+exports.handler = async (event) => {
+  const num1 = parseInt(event.num1);
+  const num2 = parseInt(event.num2);
+  return {
+    statusCode: 200,
+    body: JSON.stringify({
+      message: `The sum of ${num1} and ${num2} is ${num1 + num2}`,
+      result: num1 + num2
+    })
+  };
+};
 ```
 
 ### echo-test
 
-A function that echoes back the input:
+A simple function that echoes back the request:
 
-```bash
-# Test the function directly via LocalStack
-aws --endpoint-url http://localhost:31566 lambda invoke \
-  --function-name echo-test \
-  --payload '{"test": "data"}' \
-  output.txt
-
-# Test via KGateway (after setting up the Upstream and HTTPRoute)
-curl -H "Host: www.example.com" localhost:8080/lambda/2
+```javascript
+exports.handler = async (event) => {
+  return {
+    statusCode: 200,
+    body: JSON.stringify({
+      message: "Echo response",
+      input: event
+    })
+  };
+};
 ```
 
-## Configuration
+## Troubleshooting
 
-### LocalStack Configuration
+1. If port 8080 is in use, try a different port:
 
-The LocalStack configuration is in `localstack-values.yaml`. Key settings:
+    ```bash
+    kubectl -n kgateway-system port-forward deploy/gloo-proxy-http 8081:8080
+    ```
 
-- NodePort service type for access from the host
-- Lambda service enabled
-- Debug mode enabled
-- Persistence enabled to maintain state between restarts
+2. Verify LocalStack is running:
 
-### KGateway Configuration
+    ```bash
+    kubectl -n localstack get pods
+    ```
 
-To use the LocalStack Lambda functions with KGateway:
+3. Check Lambda function logs:
 
-1. Create AWS credentials secret:
+    ```bash
+    kubectl -n localstack logs -l app.kubernetes.io/name=localstack
+    ```
 
-```bash
-kubectl -n httpbin create secret generic aws-secret \
-  --from-literal=accessKey=test \
-  --from-literal=secretKey=test \
-  --from-literal=sessionToken=test
-```
+4. Check KGateway logs:
 
-2. Apply the example configuration:
-
-```bash
-kubectl apply -f ../../examples/example-aws-upstream.yaml
-```
-
-## Directory Structure
-
-```text
-.
-├── README.md
-├── setup-localstack.sh
-├── localstack-values.yaml
-└── lambda-functions/
-    ├── tim-test.js
-    └── echo-test.js
-```
-
-## Development Workflow
-
-1. Start the kind cluster with LocalStack:
-
-```bash
-./setup-localstack.sh
-```
-
-2. Set up KGateway with the AWS Lambda configuration
-
-3. Test the functions through KGateway:
-
-```bash
-# Port-forward the gateway
-kubectl -n kgateway-system port-forward deploy/gloo-proxy-http 8080:8080
-
-# Test the functions
-curl -H "Host: www.example.com" localhost:8080/lambda/1
-curl -H "Host: www.example.com" localhost:8080/lambda/2
-```
-
-4. View LocalStack logs if needed:
-
-```bash
-kubectl -n localstack logs -f deploy/localstack
-```
+    ```bash
+    kubectl -n kgateway-system logs -l app=gateway
+    ```
