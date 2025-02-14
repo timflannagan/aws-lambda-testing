@@ -47,11 +47,15 @@ A simple function that adds two numbers:
 # Test the function directly via LocalStack
 aws --endpoint-url http://localhost:31566 lambda invoke \
   --function-name tim-test \
-  --payload '{"body": "{\"num1\": \"10\", \"num2\": \"20\"}" }' \
+  --cli-binary-format raw-in-base64-out \
+  --payload '{"num1": "10", "num2": "20"}' \
   output.txt
 
 # Test via KGateway (after setting up the Upstream and HTTPRoute)
-curl -H "Host: www.example.com" localhost:8080/lambda/1
+curl -X POST -H "Host: www.example.com" \
+  -H "Content-Type: application/json" \
+  -d '{"num1": "10", "num2": "20"}' \
+  localhost:8080/lambda/1
 ```
 
 ### echo-test
