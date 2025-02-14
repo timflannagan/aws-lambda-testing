@@ -46,25 +46,39 @@ create_lambda_function() {
       continue
     fi
 
-    # Delete function if it exists
-    aws --endpoint-url $ENDPOINT lambda delete-function --function-name $function_name --region us-east-1 || true
+    # Create a temporary directory for packaging
+    local temp_dir=$(mktemp -d)
+    cp "$function_file" "${temp_dir}/index.js"
 
-    # Create Lambda function
-    aws --endpoint-url $ENDPOINT lambda create-function \
+    # Create ZIP file
+    (cd "${temp_dir}" && zip -r "../${function_name}.zip" .)
+
+    # Delete function if it exists
+    aws --endpoint-url $ENDPOINT --no-cli-pager lambda delete-function --function-name $function_name --region us-east-1 || true
+
+    # Create Lambda function with ZIP file
+    aws --endpoint-url $ENDPOINT --no-cli-pager lambda create-function \
       --region us-east-1 \
-      --code S3Bucket="hot-reload",S3Key="$function_file" \
       --function-name $function_name \
       --handler $function_handler \
       --role $function_role \
-      --runtime $function_runtime || true
+      --runtime $function_runtime \
+      --zip-file "fileb://${temp_dir}/../${function_name}.zip" || true
+
+    # Clean up
+    rm -rf "${temp_dir}" "${function_name}.zip"
 
     # Verify function was created with a test invocation
     echo "Testing Lambda function: $function_name"
-    aws --endpoint-url $ENDPOINT lambda invoke \
+    TEST_PAYLOAD=$(echo -n '{"body": "{\"num1\": \"10\", \"num2\": \"10\"}" }' | base64)
+    aws --endpoint-url $ENDPOINT --no-cli-pager lambda invoke \
       --region us-east-1 \
       --function-name $function_name \
-      --payload '{"body": "{\"num1\": \"10\", \"num2\": \"10\"}" }' \
+      --payload "$TEST_PAYLOAD" \
       "${function_name}-output.txt"
+    echo "Function output:"
+    cat "${function_name}-output.txt"
+    rm -f "${function_name}-output.txt"
   done
 }
 
@@ -84,6 +98,7 @@ create_aws_secret
 
 echo "LocalStack setup complete. You can now:"
 echo "1. Test the Lambda functions directly:"
-echo "   aws --endpoint-url $ENDPOINT lambda invoke --function-name tim-test --payload '{\"body\": \"{\\\"num1\\\": \\\"10\\\", \\\"num2\\\": \\\"20\\\"}\" }' output.txt"
+echo "   TEST_PAYLOAD=\$(echo -n '{\"body\": \"{\\\"num1\\\": \\\"10\\\", \\\"num2\\\": \\\"20\\\"}\" }' | base64)"
+echo "   aws --endpoint-url \$ENDPOINT --no-cli-pager lambda invoke --function-name tim-test --payload \"\$TEST_PAYLOAD\" output.txt"
 echo "2. Apply the KGateway configuration:"
 echo "   kubectl apply -f ../../examples/example-aws-upstream.yaml"
