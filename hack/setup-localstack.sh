@@ -4,7 +4,7 @@
 # for development and testing of the KGateway AWS Lambda integration.
 
 # Get directory this script is located in to access script local files
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && cd .. && pwd)"
 
 install_localstack() {
   # Create namespace for LocalStack
@@ -15,7 +15,7 @@ install_localstack() {
   helm repo update
   helm upgrade --install localstack localstack-repo/localstack \
     --namespace localstack \
-    --values "${SCRIPT_DIR}/localstack-values.yaml"
+    --values "${ROOT_DIR}/hack/localstack-values.yaml"
 
   # Wait for LocalStack pod to be ready
   kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=localstack -n localstack --timeout=120s
@@ -23,7 +23,7 @@ install_localstack() {
 
 create_lambda_function() {
   # Lambda function source code path
-  local dir="${SCRIPT_DIR}/lambda-functions"
+  local dir="${ROOT_DIR}/lambda-functions"
 
   # Lambda configuration
   local function_handler="index.handler"
@@ -85,6 +85,7 @@ create_lambda_function() {
 # Create AWS credentials secret for KGateway
 create_aws_secret() {
   kubectl create namespace httpbin > /dev/null 2>&1 || true
+
   kubectl -n httpbin create secret generic aws-secret \
     --from-literal=accessKey=test \
     --from-literal=secretKey=test \
@@ -101,4 +102,4 @@ echo "1. Test the Lambda functions directly:"
 echo "   TEST_PAYLOAD=\$(echo -n '{\"body\": \"{\\\"num1\\\": \\\"10\\\", \\\"num2\\\": \\\"20\\\"}\" }' | base64)"
 echo "   aws --endpoint-url \$ENDPOINT --no-cli-pager lambda invoke --function-name tim-test --payload \"\$TEST_PAYLOAD\" output.txt"
 echo "2. Apply the KGateway configuration:"
-echo "   kubectl apply -f ../../examples/example-aws-upstream.yaml"
+echo "   kubectl apply -f $ROOT_DIR/hack/example-aws-upstream.yaml"
