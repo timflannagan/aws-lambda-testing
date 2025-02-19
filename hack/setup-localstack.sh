@@ -45,6 +45,27 @@ install_localstack() {
   kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=localstack -n localstack --timeout=120s
 }
 
+install_pod_identity_webhook() {
+  echo "Installing AWS EKS Pod Identity Webhook..."
+
+  # Create a temporary directory for cloning
+  TMPDIR=$(mktemp -d)
+  cd "${TMPDIR}"
+
+  # Clone the repository
+  git clone https://github.com/aws/amazon-eks-pod-identity-webhook.git
+  cd amazon-eks-pod-identity-webhook
+
+  # Install using make
+  make cluster-up IMAGE=amazon/amazon-eks-pod-identity-webhook:latest
+
+  # Clean up
+  cd "${SCRIPT_DIR}"
+  rm -rf "${TMPDIR}"
+
+  echo "Pod Identity Webhook installed successfully"
+}
+
 create_lambda_function() {
   # Lambda function source code path
   local dir="${ROOT_DIR}/lambda-functions"
@@ -119,6 +140,7 @@ create_aws_secret() {
 # Main execution
 install_localstack
 install_cert_manager
+install_pod_identity_webhook
 create_lambda_function
 create_aws_secret
 
@@ -128,3 +150,5 @@ echo "   TEST_PAYLOAD=\$(echo -n '{\"body\": \"{\\\"num1\\\": \\\"10\\\", \\\"nu
 echo "   aws --endpoint-url \$ENDPOINT --no-cli-pager lambda invoke --function-name tim-test --payload \"\$TEST_PAYLOAD\" output.txt"
 echo "2. Apply the KGateway configuration:"
 echo "   kubectl apply -f $ROOT_DIR/hack/example-aws-upstream.yaml"
+echo "3. Test IRSA configuration:"
+echo "   kubectl apply -f $ROOT_DIR/hack/example-aws-upstream-irsa.yaml"
