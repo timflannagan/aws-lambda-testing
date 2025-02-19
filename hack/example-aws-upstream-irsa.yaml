@@ -1,9 +1,22 @@
 ---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: GatewayParameters
+metadata:
+  name: lambda-irsa
+  namespace: kgateway-system
+spec:
+  kube:
+    serviceAccount:
+      extraAnnotations:
+        eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/lambda-test-role
+---
 kind: Gateway
 apiVersion: gateway.networking.k8s.io/v1
 metadata:
   name: http
   namespace: kgateway-system
+  annotations:
+    gateway.kgateway.dev/gateway-parameters-name: lambda-irsa
 spec:
   gatewayClassName: kgateway
   listeners:
