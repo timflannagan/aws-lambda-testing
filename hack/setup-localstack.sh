@@ -146,7 +146,7 @@ create_aws_secret
 
 echo "LocalStack setup complete. You can now:"
 echo "1. Test the Lambda functions directly:"
-echo "   TEST_PAYLOAD=\$(echo -n '{\"body\": \"{\\\"num1\\\": \\\"10\\\", \\\"num2\\\": \\\"20\\\"}\" }' | base64)"
+echo "   TEST_PAYLOAD=\$(echo -n '{\"body\":\"{\\\"num1\\\":\\\"10\\\",\\\"num2\\\":\\\"20\\\"}\"}')"
 echo "   aws --endpoint-url \$ENDPOINT --no-cli-pager lambda invoke --function-name tim-test --payload \"\$TEST_PAYLOAD\" output.txt"
 echo "2. Apply the KGateway configuration:"
 echo "   kubectl apply -f $ROOT_DIR/hack/example-aws-upstream.yaml"
