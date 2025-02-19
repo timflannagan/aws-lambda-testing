@@ -6,6 +6,30 @@
 # Get directory this script is located in to access script local files
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && cd .. && pwd)"
 
+install_cert_manager() {
+  echo "Installing cert-manager..."
+
+  # Add the Jetstack Helm repository
+  helm repo add jetstack https://charts.jetstack.io
+  helm repo update
+
+  # Create the namespace for cert-manager
+  kubectl create namespace cert-manager || true
+
+  # Install cert-manager with CRDs
+  helm upgrade --install cert-manager jetstack/cert-manager \
+    --namespace cert-manager \
+    --set installCRDs=true \
+    --version v1.13.3
+
+  # Wait for cert-manager to be ready
+  kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=cert-manager -n cert-manager --timeout=120s
+  kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=webhook -n cert-manager --timeout=120s
+  kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=cainjector -n cert-manager --timeout=120s
+
+  echo "cert-manager installed successfully"
+}
+
 install_localstack() {
   # Create namespace for LocalStack
   kubectl create namespace localstack || true
@@ -94,6 +118,7 @@ create_aws_secret() {
 
 # Main execution
 install_localstack
+install_cert_manager
 create_lambda_function
 create_aws_secret
 
