@@ -120,10 +120,7 @@ create_lambda_function() {
       --region us-east-1 \
       --function-name $function_name \
       --payload "$TEST_PAYLOAD" \
-      "${function_name}-output.txt"
-    echo "Function output:"
-    cat "${function_name}-output.txt"
-    rm -f "${function_name}-output.txt"
+      /dev/stdin
   done
 }
 
