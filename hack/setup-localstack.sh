@@ -110,6 +110,12 @@ override_kgateway_image() {
   echo "kgateway image overridden successfully"
 }
 
+override_kgateway_crds () {
+  echo "Overriding kgateway CRDs..."
+  pushd /work/kgateway && kubectl apply -f install/helm/kgateway/crds && popd
+  echo "kgateway CRDs overridden successfully"
+}
+
 extract_localstack_endpoint() {
   # Get LocalStack endpoint
   local node_port=$(kubectl get --namespace "localstack" -o jsonpath="{.spec.ports[0].nodePort}" services localstack)
@@ -192,6 +198,7 @@ extract_localstack_endpoint
 install_gateway_crds
 install_kgateway
 override_kgateway_image
+override_kgateway_crds
 create_lambda_function
 create_aws_secret
 verify_lambda_functions
