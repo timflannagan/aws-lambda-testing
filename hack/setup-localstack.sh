@@ -6,6 +6,8 @@
 # Get directory this script is located in to access script local files
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && cd .. && pwd)"
 
+endpoint=""
+
 setup_kind_cluster() {
   echo "Setting up kind cluster with OIDC support..."
 
@@ -85,20 +87,38 @@ install_pod_identity_webhook() {
   echo "Pod Identity Webhook installed successfully"
 }
 
+install_kgateway() {
+  echo "Installing KGateway..."
+  helm upgrade -i kgateway oci://ghcr.io/kgateway-dev/charts/kgateway \
+    --version v2.0.0-main \
+    --create-namespace \
+    --namespace kgateway-system \
+
+  kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=kgateway -n kgateway-system --timeout=120s
+  echo "KGateway installed successfully"
+}
+
+override_kgateway_image() {
+  pushd "${ROOT_DIR}/kgateway"
+  make VERSION=v2.0.0-main CLUSTER_NAME=kind kind-reload-kgateway kind-reload-envoyinit -B
+  popd
+}
+
+extract_localstack_endpoint() {
+  # Get LocalStack endpoint
+  local node_port=$(kubectl get --namespace "localstack" -o jsonpath="{.spec.ports[0].nodePort}" services localstack)
+  local node_ip=$(kubectl get nodes --namespace "localstack" -o jsonpath="{.items[0].status.addresses[0].address}")
+  endpoint="http://$node_ip:$node_port"
+}
+
 create_lambda_function() {
   # Lambda function source code path
   local dir="${ROOT_DIR}/lambda-functions"
-
   # Lambda configuration
   local function_handler="index.handler"
   local function_names=("tim-test" "echo-test")
   local function_role="arn:aws:iam::000000000000:role/localstack-does-not-care"
   local function_runtime="nodejs18.x"
-
-  # Get LocalStack endpoint
-  export NODE_PORT=$(kubectl get --namespace "localstack" -o jsonpath="{.spec.ports[0].nodePort}" services localstack)
-  export NODE_IP=$(kubectl get nodes --namespace "localstack" -o jsonpath="{.items[0].status.addresses[0].address}")
-  export ENDPOINT=http://$NODE_IP:$NODE_PORT
 
   # Create each test function
   for function_name in "${function_names[@]}"; do
@@ -118,10 +138,10 @@ create_lambda_function() {
     (cd "${temp_dir}" && zip -r "../${function_name}.zip" .)
 
     # Delete function if it exists
-    aws --endpoint-url $ENDPOINT --no-cli-pager lambda delete-function --function-name $function_name --region us-east-1 || true
+    aws --endpoint-url $endpoint --no-cli-pager lambda delete-function --function-name $function_name --region us-east-1 || true
 
     # Create Lambda function with ZIP file
-    aws --endpoint-url $ENDPOINT --no-cli-pager lambda create-function \
+    aws --endpoint-url $endpoint --no-cli-pager lambda create-function \
       --region us-east-1 \
       --function-name $function_name \
       --handler $function_handler \
@@ -135,7 +155,7 @@ create_lambda_function() {
     # Verify function was created with a test invocation
     echo "Testing Lambda function: $function_name"
     TEST_PAYLOAD=$(echo -n '{"body": "{\"num1\": \"10\", \"num2\": \"10\"}" }' | base64)
-    aws --endpoint-url $ENDPOINT --no-cli-pager lambda invoke \
+    aws --endpoint-url $endpoint --no-cli-pager lambda invoke \
       --region us-east-1 \
       --function-name $function_name \
       --payload "$TEST_PAYLOAD" \
@@ -154,16 +174,24 @@ create_aws_secret() {
 }
 
 # Main execution
+setup_kind_cluster
 install_localstack
 install_cert_manager
 install_pod_identity_webhook
+extract_localstack_endpoint
+install_kgateway
+override_kgateway_image
 create_lambda_function
 create_aws_secret
 
 echo "LocalStack setup complete. You can now:"
+echo "0. Set the ENDPOINT environment variable:"
+echo "   export ENDPOINT=$endpoint"
+echo "1. Manually build and load the kgateway images"
+echo "   make VERSION=v2.0.0-main CLUSTER_NAME=kind kind-reload-kgateway kind-reload-envoyinit -B"
 echo "1. Test the Lambda functions directly:"
 echo "   TEST_PAYLOAD=\$(echo -n '{\"body\":\"{\\\"num1\\\":\\\"10\\\",\\\"num2\\\":\\\"20\\\"}\"}')"
-echo "   aws --endpoint-url \$ENDPOINT --no-cli-pager lambda invoke --function-name tim-test --payload \"\$TEST_PAYLOAD\" output.txt"
+echo "   aws --endpoint-url \$ENDPOINT --no-cli-pager lambda invoke --function-name tim-test --payload \"\$TEST_PAYLOAD\" /dev/stdin"
 echo "2. Apply the KGateway configuration:"
 echo "   kubectl apply -f $ROOT_DIR/hack/example-aws-upstream.yaml"
 echo "3. Test IRSA configuration:"
