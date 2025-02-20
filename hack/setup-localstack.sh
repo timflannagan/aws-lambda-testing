@@ -85,6 +85,11 @@ install_pod_identity_webhook() {
   echo "Pod Identity Webhook installed successfully"
 }
 
+install_gateway_crds() {
+  echo "Installing GW API CRDs..."
+  kubectl apply -k https://github.com/kubernetes-sigs/gateway-api/config/crd/experimental?ref=v1.2.1
+}
+
 install_kgateway() {
   echo "Installing KGateway..."
   helm upgrade -i kgateway oci://ghcr.io/kgateway-dev/charts/kgateway \
@@ -177,6 +182,7 @@ install_localstack
 install_cert_manager
 install_pod_identity_webhook
 extract_localstack_endpoint
+install_gateway_crds
 install_kgateway
 override_kgateway_image
 create_lambda_function
