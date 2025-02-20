@@ -74,21 +74,14 @@ install_localstack() {
 install_pod_identity_webhook() {
   echo "Installing AWS EKS Pod Identity Webhook..."
 
-  # Create a temporary directory for cloning
   TMPDIR=$(mktemp -d)
   cd "${TMPDIR}"
 
-  # Clone the repository
-  git clone https://github.com/aws/amazon-eks-pod-identity-webhook.git
-  cd amazon-eks-pod-identity-webhook
-
-  # Install using make
+  git clone https://github.com/aws/amazon-eks-pod-identity-webhook.git && pushd amazon-eks-pod-identity-webhook
   make cluster-up IMAGE=amazon/amazon-eks-pod-identity-webhook:latest
 
-  # Clean up
-  cd "${SCRIPT_DIR}"
+  popd
   rm -rf "${TMPDIR}"
-
   echo "Pod Identity Webhook installed successfully"
 }
 
