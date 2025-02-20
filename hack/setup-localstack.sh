@@ -1,9 +1,9 @@
-#!/bin/bash -ex
+#!/bin/bash
 
-# This script sets up LocalStack in a kind cluster and creates test Lambda functions
-# for development and testing of the KGateway AWS Lambda integration.
+set -o errexit
+set -o pipefail
+set -o nounset
 
-# Get directory this script is located in to access script local files
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && cd .. && pwd)"
 
 endpoint=""
