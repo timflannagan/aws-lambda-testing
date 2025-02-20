@@ -8,7 +8,7 @@ spec:
   kube:
     serviceAccount:
       extraAnnotations:
-        eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/lambda-test-role
+        eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/lambda-invoker-role
     envoyContainer:
       bootstrap:
         logLevel: debug
@@ -89,5 +89,5 @@ spec:
     region: us-east-1
     accountId: "000000000000"
     auth:
-      roleARN: "arn:aws:iam::000000000000:role/lambda-test-role"
+      roleARN: "arn:aws:iam::000000000000:role/lambda-invoker-role"
     endpointURL: "http://172.18.0.2:31566"

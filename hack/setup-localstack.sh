@@ -123,13 +123,77 @@ extract_localstack_endpoint() {
   endpoint="http://$node_ip:$node_port"
 }
 
+setup_iam_role() {
+  echo "Setting up IAM roles for IRSA testing..."
+
+  # Create the IAM role with trust relationship for IRSA
+  cat <<EOF > /tmp/trust-policy.json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::${AWS_ACCOUNT_ID:-000000000000}:oidc-provider/oidc.eks.us-west-2.amazonaws.com/id/test"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "oidc.eks.us-west-2.amazonaws.com/id/test:sub": "system:serviceaccount:default:lambda-invoker-sa"
+        }
+      }
+    }
+  ]
+}
+EOF
+
+  # Create role with trust policy
+  aws --endpoint-url $endpoint iam create-role \
+    --role-name lambda-invoker-role \
+    --assume-role-policy-document file:///tmp/trust-policy.json
+
+  # Create policy document with least privilege permissions
+  cat <<EOF > /tmp/lambda-policy.json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "lambda:InvokeFunction",
+        "lambda:GetFunction"
+      ],
+      "Resource": [
+        "arn:aws:lambda:${AWS_REGION:-us-east-1}:${AWS_ACCOUNT_ID:-000000000000}:function:*"
+      ]
+    }
+  ]
+}
+EOF
+
+  # Create the IAM policy
+  aws --endpoint-url $endpoint iam create-policy \
+    --policy-name lambda-invoker-policy \
+    --policy-document file:///tmp/lambda-policy.json
+
+  # Attach the policy to the role
+  aws --endpoint-url $endpoint iam attach-role-policy \
+    --role-name lambda-invoker-role \
+    --policy-arn arn:aws:iam::${AWS_ACCOUNT_ID:-000000000000}:policy/lambda-invoker-policy
+
+  # Clean up temporary files
+  rm -f /tmp/trust-policy.json /tmp/lambda-policy.json
+
+  echo "IAM role and policy created successfully"
+}
+
 create_lambda_function() {
   # Lambda function source code path
   local dir="${ROOT_DIR}/lambda-functions"
   # Lambda configuration
   local function_handler="index.handler"
   local function_names=("tim-test" "echo-test")
-  local function_role="arn:aws:iam::000000000000:role/localstack-does-not-care"
+  local function_role="arn:aws:iam::000000000000:role/lambda-invoker-role"
   local function_runtime="nodejs18.x"
 
   # Create each test function
@@ -195,6 +259,7 @@ install_localstack
 install_cert_manager
 install_pod_identity_webhook
 extract_localstack_endpoint
+setup_iam_role
 install_gateway_crds
 install_kgateway
 override_kgateway_image
