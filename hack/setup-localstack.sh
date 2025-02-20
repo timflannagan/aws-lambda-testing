@@ -6,6 +6,25 @@
 # Get directory this script is located in to access script local files
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && cd .. && pwd)"
 
+setup_kind_cluster() {
+  echo "Setting up kind cluster with OIDC support..."
+
+  # Generate OIDC keys
+  "${ROOT_DIR}/hack/setup-oidc.sh"
+
+  # Verify OIDC files exist
+  echo "Verifying OIDC files..."
+  ls -la "${ROOT_DIR}/hack/aws-oidc"
+
+  kind create cluster --config "${ROOT_DIR}/hack/kind-config.yaml"
+
+  # Verify API server configuration
+  echo "Verifying API server configuration..."
+  kubectl get --raw /openid/v1/jwks
+
+  echo "Kind cluster created successfully"
+}
+
 install_cert_manager() {
   echo "Installing cert-manager..."
 

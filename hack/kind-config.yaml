@@ -1,0 +1,20 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  extraMounts:
+  - hostPath: /work/aws-lambda-testing/hack/aws-oidc
+    containerPath: "/etc/kubernetes/oidc"
+    readOnly: true
+kubeadmConfigPatches:
+- |
+  kind: ClusterConfiguration
+  apiServer:
+    extraArgs:
+      service-account-key-file: /etc/kubernetes/pki/sa.pub
+      service-account-signing-key-file: /etc/kubernetes/pki/sa.key
+      service-account-issuer: https://fake-oidc.solo.io
+      api-audiences: sts.amazonaws.com
+  controllerManager:
+    extraArgs:
+      service-account-private-key-file: /etc/kubernetes/oidc/sa-signer.key
