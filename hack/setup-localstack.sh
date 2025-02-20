@@ -11,6 +11,11 @@ endpoint=""
 setup_kind_cluster() {
   echo "Setting up kind cluster with OIDC support..."
 
+  if kind get clusters | grep -q "kind"; then
+    echo "Kind cluster already exists. Skipping setup."
+    return
+  fi
+
   # Generate OIDC keys
   "${ROOT_DIR}/hack/setup-oidc.sh"
 
