@@ -4,22 +4,42 @@ This directory contains scripts and configuration for testing the KGateway AWS L
 
 ## Setup
 
-1. Run the setup script to create the test environment:
+Run the setup script to create the test environment:
 
+```bash
+./hack/setup-localstack.sh
+```
+
+This will:
+- Create a kind cluster with OIDC support for IRSA
+- Install LocalStack in your kind cluster
+- Install cert-manager for TLS certificate management
+- Install the AWS EKS Pod Identity Webhook for IRSA support
+- Install KGateway from a local Helm chart
+- Create test Lambda functions (tim-test and echo-test)
+- Create AWS credentials secret for KGateway
+
+Then apply the KGateway configuration:
+
+```bash
+kubectl apply -f hack/example-aws-upstream.yaml
+```
+
+## Using Custom KGateway Builds
+
+To test with a custom build of KGateway:
+
+1. Package the local Helm chart:
     ```bash
-    ./setup-localstack.sh
+    pushd /work/kgateway && make package-kgateway-chart VERSION="v2.0.0-main" && kubectl apply -f install/helm/kgateway/crds && popd
     ```
 
-    This will:
-    - Install LocalStack in your kind cluster
-    - Create test Lambda functions (tim-test and echo-test)
-    - Create AWS credentials secret for KGateway
-
-2. Apply the KGateway configuration:
-
+2. Reload KGateway in the cluster:
     ```bash
-    kubectl apply -f ../../examples/example-aws-upstream.yaml
+    pushd /work/kgateway && make VERSION=v2.0.0-main CLUSTER_NAME=kind kind-reload-kgateway -B && popd
     ```
+
+This will rebuild and reload KGateway with your local changes.
 
 ## Testing
 
