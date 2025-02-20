@@ -102,9 +102,12 @@ install_kgateway() {
 }
 
 override_kgateway_image() {
-  pushd "${ROOT_DIR}/kgateway"
-  make VERSION=v2.0.0-main CLUSTER_NAME=kind kind-reload-kgateway kind-reload-envoyinit -B
+  echo "Overriding kgateway image with local images..."
+  pushd /work/kgateway
+  make VERSION=v2.0.0-main CLUSTER_NAME=kind kind-reload-kgateway -B
+  make VERSION=v2.0.0-main CLUSTER_NAME=kind kind-build-and-load-envoy-wrapper -B
   popd
+  echo "kgateway image overridden successfully"
 }
 
 extract_localstack_endpoint() {
@@ -140,11 +143,9 @@ create_lambda_function() {
     # Create ZIP file
     (cd "${temp_dir}" && zip -r "../${function_name}.zip" .)
 
-    # Delete function if it exists
-    aws --endpoint-url $endpoint --no-cli-pager lambda delete-function --function-name $function_name --region us-east-1 || true
-
     # Create Lambda function with ZIP file
-    aws --endpoint-url $endpoint --no-cli-pager lambda create-function \
+    aws --endpoint-url $endpoint lambda create-function \
+      --no-cli-pager \
       --region us-east-1 \
       --function-name $function_name \
       --handler $function_handler \
@@ -154,11 +155,17 @@ create_lambda_function() {
 
     # Clean up
     rm -rf "${temp_dir}" "${function_name}.zip"
+  done
+}
 
-    # Verify function was created with a test invocation
+verify_lambda_functions() {
+  echo "Verifying Lambda functions..."
+  local function_names=("tim-test" "echo-test")
+  for function_name in "${function_names[@]}"; do
     echo "Testing Lambda function: $function_name"
     TEST_PAYLOAD=$(echo -n '{"body": "{\"num1\": \"10\", \"num2\": \"10\"}" }' | base64)
-    aws --endpoint-url $endpoint --no-cli-pager lambda invoke \
+    aws --endpoint-url $endpoint lambda invoke \
+      --no-cli-pager \
       --region us-east-1 \
       --function-name $function_name \
       --payload "$TEST_PAYLOAD" \
@@ -187,6 +194,7 @@ install_kgateway
 override_kgateway_image
 create_lambda_function
 create_aws_secret
+verify_lambda_functions
 
 echo "LocalStack setup complete. You can now:"
 echo "0. Set the ENDPOINT environment variable:"
