@@ -9,6 +9,12 @@ spec:
     serviceAccount:
       extraAnnotations:
         eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/lambda-test-role
+    envoyContainer:
+      bootstrap:
+        logLevel: debug
+      image:
+        # Locally built image that uses the 1.34.0-patch0 envoy-gloo tag.
+        tag: v2.0.0-main
 ---
 kind: Gateway
 apiVersion: gateway.networking.k8s.io/v1
