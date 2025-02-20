@@ -16,7 +16,7 @@ setup_kind_cluster() {
 
   # Verify OIDC files exist
   echo "Verifying OIDC files..."
-  ls -la "${ROOT_DIR}/hack/aws-oidc"
+  ls -la "${ROOT_DIR}/oidc"
 
   kind create cluster --config "${ROOT_DIR}/hack/kind-config.yaml"
 
