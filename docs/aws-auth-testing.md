@@ -4,12 +4,8 @@ This guide covers testing AWS authentication methods with KGateway in a real AWS
 
 ## Prerequisites
 
-- Access to an EKS cluster (for IRSA testing)
-- A test Lambda function in your AWS account
-- Access to the KG source code repository
 - `aws` CLI configured with valid credentials
 - `kubectl` configured to access your cluster
-- `kind` installed for local testing
 - `helm` installed for deploying KG
 - `eksctl` installed for creating the EKS cluster
 
@@ -32,382 +28,433 @@ Here's a summary of the three authentication methods available:
 
 ## Setup
 
-### IRSA (via EKS)
+The following steps are required to setup the EKS cluster and deploy the KG project.
+
+### Prerequisites
 
 1. Optional: Install eksctl
 
-    ```bash
-    ARCH=amd64
-    PLATFORM=$(uname -s)_$ARCH
+```bash
+ARCH=amd64
+PLATFORM=$(uname -s)_$ARCH
 
-    curl -sLO "https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_$PLATFORM.tar.gz"
+curl -sLO "https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_$PLATFORM.tar.gz"
 
-    # (Optional) Verify checksum
-    curl -sL "https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_checksums.txt" | grep $PLATFORM | sha256sum --check
+# (Optional) Verify checksum
+curl -sL "https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_checksums.txt" | grep $PLATFORM | sha256sum --check
 
-    tar -xzf eksctl_$PLATFORM.tar.gz -C /tmp && rm eksctl_$PLATFORM.tar.gz
+tar -xzf eksctl_$PLATFORM.tar.gz -C /tmp && rm eksctl_$PLATFORM.tar.gz
 
-    sudo mv /tmp/eksctl /usr/local/bin
-    ```
+sudo mv /tmp/eksctl /usr/local/bin
+```
 
 2. Optional: Configure AWS credentials
 
-    ```bash
-    aws configure
-    ```
+```bash
+aws configure
+```
 
 3. Create an EKS cluster
 
-    ```bash
-   eksctl create cluster \
-      --name kgateway-lambda-test \
-      --region us-east-1 \
-      --version 1.31 \
-      --nodegroup-name standard-workers \
-      --node-type t3.medium \
-      --nodes 2 \
-      --tags developer=tim
-    ```
+```bash
+eksctl create cluster \
+  --name kgateway-lambda-test \
+  --region us-east-1 \
+  --version 1.31 \
+  --nodegroup-name standard-workers \
+  --node-type t3.medium \
+  --nodes 2 \
+  --tags developer=tim
+```
 
-4. Associate the OIDC provider with the cluster
+4. Deploy the Kubernetes Gateway API CRDs
 
-    ```bash
-    eksctl utils associate-iam-oidc-provider \
-      --region us-east-1 \
-      --cluster kgateway-lambda-test \
-      --approve
-    ```
+```bash
+kubectl apply --kustomize "https://github.com/kubernetes-sigs/gateway-api/config/crd/experimental?ref=v1.2.1"
+```
 
-5. Create a policy for the lambda invoker role
+5. Development Only: Build and publish custom KG images to your own registry
 
-    ```bash
-    aws iam create-policy \
-      --tags Key=developer,Value=tim \
-      --policy-name lambda-invoker-policy \
-      --policy-document '{
-        "Version": "2012-10-17",
-        "Statement": [
-          {
-            "Effect": "Allow",
-            "Action": [
-              "lambda:InvokeFunction",
-              "lambda:GetFunction"
-            ],
-            "Resource": "*"
-          }
-        ]
-      }'
-    ```
+```bash
+# Login to your registry
+docker login ghcr.io -u timflannagan --password $(echo $GITHUB_TOKEN)
+# Build and publish the images
+make release IMAGE_REGISTRY=ghcr.io/timflannagan VERSION="v2.0.0-lambda" GORELEASER_ARGS="--clean --skip=validate"
+# Build and publish the helm chart
+make package-kgateway-chart VERSION=v2.0.0-lambda
+helm push _test/kgateway-v2.0.0-lambda.tgz oci://ghcr.io/timflannagan/charts
+```
 
-6. Create a role for the lambda invoker
+6. Deployment: Install KG with custom values
 
-    Add the following env vars to your shell
+For development, override the default values with the following:
 
-    ```bash
-    export AWS_CLUSTER_NAME=kgateway-lambda-test
-    export AWS_ROLE_NAME=kgateway-lambda-invoker-role
-    export AWS_REGION=us-east-1
-    export OIDC_PROVIDER=$(aws eks describe-cluster --name $AWS_CLUSTER_NAME --query "cluster.identity.oidc.issuer" --output text | sed -e "s/^https:\/\///")
-    export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-    ```
+```bash
+helm upgrade -i kgateway oci://ghcr.io/timflannagan/charts/kgateway \
+  --create-namespace \
+  --namespace kgateway-system \
+  --version v2.0.0-lambda \
+  --set image.registry=ghcr.io/timflannagan \
+  --set image.tag=v2.0.0-lambda-amd64 \
+  --set image.pullPolicy=Always
+```
 
-    Create the role
+When support for [AWS Lambda](https://github.com/kgateway-dev/kgateway/pull/10720) has been merged, you can install KG with the following:
 
-    ```bash
-    aws iam create-role \
-      --tags Key=developer,Value=tim \
-      --role-name $AWS_ROLE_NAME \
-      --assume-role-policy-document '{
-        "Version": "2012-10-17",
-        "Statement": [
-          {
-            "Effect": "Allow",
-            "Principal": {
-              "Federated": "arn:aws:iam::'"${AWS_ACCOUNT_ID}"':oidc-provider/'"${OIDC_PROVIDER}"'"
-            },
-            "Action": "sts:AssumeRoleWithWebIdentity",
-            "Condition": {
-              "StringEquals": {
-                "'"${OIDC_PROVIDER}":sub'": "system:serviceaccount:gwtest:http-gw"
-              }
-            }
-          }
-        ]
-      }'
-    ```
+```bash
+helm install kgateway oci://cr.kgateway.dev/kgateway-dev/charts/kgateway \
+  --create-namespace \
+  --namespace kgateway-system \
+  --version v2.0.0-beta1
+```
 
-7. Attach the policy to the role
+7. Optional: Validate the installation
 
-    ```bash
-    aws iam attach-role-policy \
-      --role-name $AWS_ROLE_NAME \
-      --policy-arn arn:aws:iam::${AWS_ACCOUNT_ID}:policy/lambda-invoker-policy
-    ```
+```bash
+# verify the GC was reconciled by the controller
+kubectl -n kgateway-system get gatewayclass kgateway -o jsonpath='{.status.conditions[?(@.type=="Accepted")]}'
+# verify the GW was reconciled by the controller
+kubectl -n gwtest get gateway http-gw -o jsonpath='{.status.conditions[?(@.type=="Accepted")].status}'
+```
 
-8. Deploy the Kubernetes Gateway API CRDs
+8. Add the following env vars to your shell
 
-    ```bash
-    kubectl apply --kustomize "https://github.com/kubernetes-sigs/gateway-api/config/crd/experimental?ref=v1.2.1"
-    ```
+```bash
+export AWS_CLUSTER_NAME=kgateway-lambda-test
+export AWS_REGION=us-east-1
+export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+```
 
-9. Development: Build and publish custom KG images to your own registry
+### Authentication Method 1: Static AWS Credentials
 
-    ```bash
-    # Login to your registry
-    docker login ghcr.io -u timflannagan --password $(echo $GITHUB_TOKEN)
-    # Build and publish the images
-    make release IMAGE_REGISTRY=ghcr.io/timflannagan VERSION="v2.0.0-lambda" GORELEASER_ARGS="--clean --skip=validate"
-    # Build and publish the helm chart
-    make package-kgateway-chart VERSION=v2.0.0-lambda
-    helm push _test/kgateway-v2.0.0-lambda.tgz oci://ghcr.io/timflannagan/charts
-    ```
+1. Create a namespace for the test
 
-10. Deployment: Install KG with custom values
+```bash
+kubectl create namespace gwtest
+```
 
-    ```bash
-    helm upgrade -i kgateway oci://ghcr.io/timflannagan/charts/kgateway \
-      --create-namespace \
-      --namespace kgateway-system \
-      --version v2.0.0-lambda \
-      --set image.registry=ghcr.io/timflannagan \
-      --set image.tag=v2.0.0-lambda-amd64 \
-      --set image.pullPolicy=Always
-    ```
+2. Create a secret with AWS credentials
 
-11. Optional: Validate the installation
+```bash
+kubectl -n gwtest create secret generic aws-creds \
+  --from-literal=accessKey=$AWS_ACCESS_KEY_ID \
+  --from-literal=secretKey=$AWS_SECRET_ACCESS_KEY \
+  --from-literal=sessionToken=$AWS_SESSION_TOKEN
+```
 
-    ```bash
-    # verify the GC was reconciled by the controller
-    kubectl -n kgateway-system get gatewayclass kgateway -o jsonpath='{.status.conditions[?(@.type=="Accepted")]}'
-    # verify the GW was reconciled by the controller
-    kubectl -n gwtest get gateway http-gw -o jsonpath='{.status.conditions[?(@.type=="Accepted")].status}'
-    ```
+3. Apply the CRs
 
-12. Apply example KG CRs to test IRSA
+```bash
+export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+envsubst < docs/aws-static.yaml | kubectl apply -f -
+```
 
-    Deploy the CRs
+See [aws-static.yaml](./aws-static.yaml) for the CRs used in this test.
 
-    ```bash
-    envsubst < docs/aws-pod-identity.yaml | kubectl apply -f -
-    ```
+5. Test the Lambda invocation
 
-13. Optional: Verify the installation
+See [Routing to Lambda Function](#routing-to-lambda-function) for the test.
 
-    Verify the Gateway was accepted
+6. Cleanup
 
-    ```bash
-    kubectl -n gwtest get gateway http-gw -o jsonpath='{.status.conditions[?(@.type=="Accepted")]}'
-    ```
+```bash
+kubectl delete -f docs/aws-static.yaml
+kubectl delete secret aws-creds -n gwtest
+kubectl delete ns gwtest
+```
 
-    Verify the Envoy proxy is running
+### Authentication Method 2: Node Roles
 
-    ```bash
-    kubectl -n gwtest get po -l app.kubernetes.io/instance=http-gw
-    ```
-
-    Verify the AWS_* env vars are set correctly
-
-    ```bash
-    kubectl -n gwtest get $(kubectl -n gwtest get po -l app.kubernetes.io/instance=http-gw -o name) -o jsonpath='{.spec.containers[0].env}' | grep AWS_
-    ```
-
-14. Verify routing to lambda backend works
-
-    ```bash
-    export LOAD_BALANCER_ADDR=$(kubectl -n gwtest get svc http-gw -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-    curl -X POST http://$LOAD_BALANCER_ADDR:8080/lambda \
-      -H "Host: www.example.com" \
-      -H "Content-Type: application/json" \
-      -d '{"name": "Tim"}'
-    ```
-
-    You should see the following output:
-
-    ```bash
-    "tim - Hello from Lambda"
-    ```
-
-15. Cleanup
-
-    ```bash
-    kubectl delete ns gwtest
-    ```
-
-    Re-set environment variables
-
-    ```bash
-    export AWS_REGION=us-east-1
-    export OIDC_PROVIDER=$(aws eks describe-cluster --name kgateway-test --query "cluster.identity.oidc.issuer" --output text | sed -e "s/^https:\/\///")
-    export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-    ```
-
-    Delete the OIDC provider if you're done with the testing.
-
-    ```bash
-    aws iam delete-open-id-connect-provider \
-      --open-id-connect-provider-arn arn:aws:iam::${AWS_ACCOUNT_ID}:oidc-provider/${OIDC_PROVIDER}
-    ```
-
-    Delete the policy if you're done with the testing.
-
-    ```bash
-    # First detach the policy from any roles
-    aws iam detach-role-policy \
-      --role-name lambda-invoker-role \
-      --policy-arn arn:aws:iam::${AWS_ACCOUNT_ID}:policy/lambda-invoker-policy
-
-    # List all policy versions
-    aws iam list-policy-versions \
-      --policy-arn arn:aws:iam::${AWS_ACCOUNT_ID}:policy/lambda-invoker-policy \
-      --no-cli-pager
-
-    # Delete all non-default versions (if any exist)
-    for version in $(aws iam list-policy-versions \
-      --policy-arn arn:aws:iam::${AWS_ACCOUNT_ID}:policy/lambda-invoker-policy \
-      --query 'Versions[?IsDefaultVersion==`false`].VersionId' \
-      --output text); do
-      aws iam delete-policy-version \
-        --policy-arn arn:aws:iam::${AWS_ACCOUNT_ID}:policy/lambda-invoker-policy \
-        --version-id $version
-    done
-
-    # Now we can delete the policy
-    aws iam delete-policy \
-      --policy-arn arn:aws:iam::${AWS_ACCOUNT_ID}:policy/lambda-invoker-policy
-    ```
-
-    Delete the role if you're done with the testing.
-
-    ```bash
-    # List and detach all attached policies
-    aws iam list-attached-role-policies \
-      --role-name lambda-invoker-role \
-      --no-cli-pager
-
-    for policy_arn in $(aws iam list-attached-role-policies \
-      --role-name lambda-invoker-role \
-      --query 'AttachedPolicies[*].PolicyArn' \
-      --output text); do
-      echo "Detaching policy: $policy_arn"
-      aws iam detach-role-policy \
-        --role-name lambda-invoker-role \
-        --policy-arn $policy_arn
-    done
-
-    # List and delete all inline policies
-    aws iam list-role-policies \
-      --role-name lambda-invoker-role \
-      --no-cli-pager
-
-    for policy_name in $(aws iam list-role-policies \
-      --role-name lambda-invoker-role \
-      --query 'PolicyNames[*]' \
-      --output text); do
-      echo "Deleting inline policy: $policy_name"
-      aws iam delete-role-policy \
-        --role-name lambda-invoker-role \
-        --policy-name $policy_name
-    done
-
-    # Now we can delete the role
-    aws iam delete-role --role-name lambda-invoker-role
-    ```
-
-    Delete the EKS cluster if you're done with the testing.
-
-    ```bash
-    eksctl delete cluster --name kgateway-test --region us-east-1
-    ```
-
-### Default: Node Role (via EKS)
+> TODO: Do I need to do this for each node role?
 
 This method uses the EKS node's IAM role to authenticate with AWS services. This is the simplest method but requires granting permissions to all nodes in the cluster.
-
-Follow the same EKS setup steps outlined above, but instead of using IRSA, use the node role.
 
 1. Get the Node Role Name
 
 ```bash
-# Get the node role name. You may need to copy/paste if more than one role is returned.
-NODE_ROLE_NAME=$(aws iam list-roles --query 'Roles[?contains(RoleName, `NodeInstanceRole`)].RoleName' --output text)
-echo "Node role: $NODE_ROLE_NAME"
+export NODE_ROLES=$(aws iam list-roles --query 'Roles[?contains(RoleName, `NodeInstanceRole`)].RoleName' --output text)
+echo "Node roles: $NODE_ROLES"
 ```
 
-2. Add Lambda Invoke Permissions to Node Role
+2. Add Lambda Invoke Permissions to the EKS node role
 
-    ```bash
-    # Create an inline policy for Lambda invoke
-    aws iam put-role-policy \
-    --role-name $NODE_ROLE_NAME \
-    --policy-name lambda-invoke \
-    --policy-document '{
-        "Version": "2012-10-17",
-        "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": [
-            "lambda:InvokeFunction",
-            "lambda:GetFunction"
-            ],
-            "Resource": "*"
+```bash
+export AWS_POLICY_NAME=kgateway-lambda-node-policy
+aws iam put-role-policy \
+  --role-name $NODE_ROLE_NAME \
+  --policy-name $AWS_POLICY_NAME \
+  --policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": [
+          "lambda:InvokeFunction",
+          "lambda:GetFunction"
+        ],
+        "Resource": "*"
+      }
+    ]
+  }'
+```
+
+3. Optional: Verify the policy was attached
+
+```bash
+aws iam list-role-policies \
+  --role-name $NODE_ROLE_NAME \
+  --no-cli-pager
+```
+
+```bash
+aws iam get-role-policy \
+  --role-name $NODE_ROLE_NAME \
+  --policy-name $AWS_POLICY_NAME \
+  --no-cli-pager
+```
+
+4. Optional: Debugging Node Role Auth
+
+```bash
+# Check Envoy logs
+kubectl -n gwtest logs -l app.kubernetes.io/instance=http-gw --tail 100
+
+# Verify the identity being used (should show the node role)
+kubectl -n gwtest exec -it deploy/http-gw -- aws sts get-caller-identity
+
+# Check if AWS env vars are set (they shouldn't be if using node role)
+kubectl -n gwtest exec -it deploy/http-gw -- env | grep AWS_
+```
+
+5. Deploy the CRs
+
+```bash
+envsubst < docs/aws-default.yaml | kubectl apply -f -
+```
+
+See [aws-default.yaml](./aws-default.yaml) for the CRs used in this test.
+
+6. Cleanup
+
+Delete the test resources:
+
+```bash
+kubectl delete -f docs/aws-default.yaml
+```
+
+Delete the namespace:
+
+```bash
+kubectl delete ns gwtest
+```
+
+Remove the Lambda invoke policy from the node role:
+
+```bash
+aws iam delete-role-policy \
+  --role-name $NODE_ROLE_NAME \
+  --policy-name $AWS_POLICY_NAME
+```
+
+### Authentication Method 3: Pod Identity (IRSA)
+
+1. Add the following env vars to your shell
+
+```bash
+export AWS_ROLE_NAME=kgateway-lambda-invoker-role
+export AWS_POLICY_NAME=kgateway-lambda-invoker-policy
+```
+
+2. Associate the OIDC provider with the cluster
+
+```bash
+eksctl utils associate-iam-oidc-provider \
+  --region us-east-1 \
+  --cluster $AWS_CLUSTER_NAME \
+  --approve
+```
+
+3. Create a policy for the lambda invoker role
+
+```bash
+aws iam create-policy \
+  --tags Key=developer,Value=tim \
+  --policy-name $AWS_POLICY_NAME \
+  --policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": [
+          "lambda:InvokeFunction",
+          "lambda:GetFunction"
+        ],
+        "Resource": "*"
+      }
+    ]
+  }'
+```
+
+4. Create an IAM role for the lambda invoker
+
+```bash
+export OIDC_PROVIDER=$(aws eks describe-cluster --name $AWS_CLUSTER_NAME --query "cluster.identity.oidc.issuer" --output text | sed -e "s/^https:\/\///")
+aws iam create-role \
+  --tags Key=developer,Value=tim \
+  --role-name $AWS_ROLE_NAME \
+  --assume-role-policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": {
+          "Federated": "arn:aws:iam::'"${AWS_ACCOUNT_ID}"':oidc-provider/'"${OIDC_PROVIDER}"'"
+        },
+        "Action": "sts:AssumeRoleWithWebIdentity",
+        "Condition": {
+          "StringEquals": {
+            "'"${OIDC_PROVIDER}":sub'": "system:serviceaccount:gwtest:http-gw"
+          }
         }
-        ]
-    }'
+      }
+    ]
+  }'
+```
 
-    # Verify the policy was attached
-    aws iam get-role-policy \
-    --role-name $NODE_ROLE_NAME \
-    --policy-name lambda-invoke \
+5. Attach the policy to the role
+
+```bash
+aws iam attach-role-policy \
+  --role-name $AWS_ROLE_NAME \
+  --policy-arn arn:aws:iam::${AWS_ACCOUNT_ID}:policy/$AWS_POLICY_NAME
+```
+
+6. Apply example KG CRs to test IRSA
+
+```bash
+envsubst < docs/aws-pod-identity.yaml | kubectl apply -f -
+```
+
+See [aws-pod-identity.yaml](./aws-pod-identity.yaml) for the CRs used in this test.
+
+7. Test the Lambda invocation
+
+See [Routing to Lambda Function](#routing-to-lambda-function) for the test.
+
+8. Cleanup
+
+Delete the test resources:
+
+```bash
+kubectl delete -f docs/aws-pod-identity.yaml
+kubectl delete ns gwtest
+```
+
+Delete the OIDC provider if you're done with the testing.
+
+```bash
+aws iam delete-open-id-connect-provider \
+  --open-id-connect-provider-arn arn:aws:iam::${AWS_ACCOUNT_ID}:oidc-provider/${OIDC_PROVIDER}
+```
+
+Delete the IAM resources if you're done with the testing.
+
+```bash
+# First detach the policy from any roles
+aws iam detach-role-policy \
+  --role-name $AWS_ROLE_NAME \
+  --policy-arn arn:aws:iam::${AWS_ACCOUNT_ID}:policy/$AWS_POLICY_NAME \
+  --no-cli-pager
+
+# List all policy versions
+aws iam list-policy-versions \
+  --policy-arn arn:aws:iam::${AWS_ACCOUNT_ID}:policy/$AWS_POLICY_NAME \
+  --no-cli-pager
+
+# Delete all non-default versions (if any exist)
+for version in $(aws iam list-policy-versions \
+  --policy-arn arn:aws:iam::${AWS_ACCOUNT_ID}:policy/$AWS_POLICY_NAME \
+  --query 'Versions[?IsDefaultVersion==`false`].VersionId' \
+  --output text); do
+  aws iam delete-policy-version \
+    --policy-arn arn:aws:iam::${AWS_ACCOUNT_ID}:policy/$AWS_POLICY_NAME \
+    --version-id $version \
     --no-cli-pager
-    ```
+done
 
-3. (Optional) Debugging Node Role Auth
+# Now we can delete the policy
+aws iam delete-policy \
+  --policy-arn arn:aws:iam::${AWS_ACCOUNT_ID}:policy/$AWS_POLICY_NAME \
+  --no-cli-pager
 
-    ```bash
-    # Check Envoy logs
-    kubectl -n gwtest logs -l app.kubernetes.io/instance=http-gw --tail 100
+# List and detach all attached policies
+aws iam list-attached-role-policies \
+  --role-name $AWS_ROLE_NAME \
+  --no-cli-pager
 
-    # Verify the identity being used (should show the node role)
-    kubectl -n gwtest exec -it deploy/http-gw -- aws sts get-caller-identity
+for policy_arn in $(aws iam list-attached-role-policies \
+  --role-name $AWS_ROLE_NAME \
+  --query 'AttachedPolicies[*].PolicyArn' \
+  --output text); do
+  echo "Detaching policy: $policy_arn"
+  aws iam detach-role-policy \
+    --role-name $AWS_ROLE_NAME \
+    --policy-arn $policy_arn \
+    --no-cli-pager
+done
 
-    # Check if AWS env vars are set (they shouldn't be if using node role)
-    kubectl -n gwtest exec -it deploy/http-gw -- env | grep AWS_
-    ```
+# List and delete all inline policies
+aws iam list-role-policies \
+  --role-name $AWS_ROLE_NAME \
+  --no-cli-pager
 
-3. Deploy the GW API CRs
+for policy_name in $(aws iam list-role-policies \
+  --role-name $AWS_ROLE_NAME \
+  --query 'PolicyNames[*]' \
+  --output text); do
+  echo "Deleting inline policy: $policy_name"
+  aws iam delete-role-policy \
+    --role-name $AWS_ROLE_NAME \
+    --policy-name $policy_name \
+    --no-cli-pager
+done
 
-    ```bash
-    kubectl apply -f docs/aws-default.yaml
-    ```
+# Now we can delete the role
+aws iam delete-role \
+  --role-name $AWS_ROLE_NAME \
+  --no-cli-pager
 
-4. Test the Lambda Function
+# validate the role was deleted
+aws iam get-role \
+  --role-name $AWS_ROLE_NAME \
+  --no-cli-pager
 
-    ```bash
-    # Get the LoadBalancer address
-    export LOAD_BALANCER_ADDR=$(kubectl -n gwtest get svc http-gw -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+# validate the policy was deleted
+aws iam get-policy \
+  --policy-arn arn:aws:iam::${AWS_ACCOUNT_ID}:policy/$AWS_POLICY_NAME \
+  --no-cli-pager
+```
 
-    # Test the Lambda invocation
-    curl -X POST http://$LOAD_BALANCER_ADDR:8080/lambda \
-    -H "Host: www.example.com" \
-    -H "Content-Type: application/json" \
-    -d '{"name": "Tim"}'
-    ```
+### Routing to Lambda Function
 
-5. Clean Up Node Role Auth
+```bash
+# Get the LoadBalancer address
+export LOAD_BALANCER_ADDR=$(kubectl -n gwtest get svc http-gw -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
 
-    ```bash
-    # Remove the Lambda invoke policy from the node role
-    aws iam delete-role-policy \
-    --role-name $NODE_ROLE_NAME \
-    --policy-name lambda-invoke
+# Test the Lambda invocation
+curl -X POST http://$LOAD_BALANCER_ADDR:8080/lambda \
+-H "Host: www.example.com" \
+-H "Content-Type: application/json" \
+-d '{"name": "Tim"}'
+```
 
-    # Delete test resources
-    kubectl delete ns gwtest
-    ```
+### Additional Cleanup
 
-6. Additional Cleanup
+Delete the EKS cluster if you're done with the testing.
 
-Follow the same cleanup steps outlined above for IRSA.
+```bash
+eksctl delete cluster --name $AWS_CLUSTER_NAME --region $AWS_REGION
+```
 
 ## Debugging
 
