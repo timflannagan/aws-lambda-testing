@@ -39,12 +39,12 @@ metadata:
   name: lambda-backend
   namespace: gwtest
 spec:
-  type: aws
+  type: AWS
   aws:
     accountId: "${AWS_ACCOUNT_ID}"
     auth:
-      type: static
-      static:
+      type: Secret
+      secret:
         name: "aws-creds"
     lambda:
       functionName: "tim-test"
