@@ -1,6 +1,6 @@
 # AWS Authentication Testing Guide
 
-This guide covers testing AWS authentication methods with KGateway in a real AWS environment. While the project uses LocalStack for basic testing, certain authentication features like IRSA require testing against real AWS services.
+This guide covers testing AWS authentication methods with KGateway in a real AWS environment. While the upstream project leverages LocalStack for basic testing, IAM enforcement is not supported in the free tier, and requires spinning up a real EKS cluster.
 
 ## Prerequisites
 
@@ -17,38 +17,18 @@ This guide covers testing AWS authentication methods with KGateway in a real AWS
 
 Here's a summary of the three authentication methods available:
 
-1. **Default: Node Role (Instance Metadata)**
-   - **Pros**:
-     - Simplest to configure (no auth config needed)
-     - Uses AWS credential provider chain
-     - Works with existing node permissions
-   - **Cons**:
-     - Less granular control
-     - All pods on node share same permissions
-     - Not recommended for production
-     - Requires adding the right lambda roles to the node role to make this work.
-2. **IRSA (Recommended for Production)**
-   - **Pros**:
-     - Fine-grained permission control
-     - Pod-level isolation
-     - AWS best practice for EKS
-   - **Cons**:
-     - More complex setup
-     - Requires EKS cluster with OIDC provider
-3. **Static Credentials**
-   - **Pros**:
-     - Works anywhere (not EKS specific)
-     - Simple to understand
-   - **Cons**:
-     - Credential rotation challenges
-     - Security risk if leaked
-     - Not recommended for production
-
-Choose the authentication method based on your security requirements and operational needs:
-
-- For production: Use IRSA
-- For testing/development: Node role or static credentials
-- For non-EKS environments: Static credentials
+1. **Static AWS Credentials (Simple Setup)**
+   - Uses AWS credentials stored in a Kubernetes secret
+   - Good for testing and non-EKS environments
+   - Not recommended for production
+2. **Pod Identity (Recommended for Production)**
+   - Uses IAM Roles for Service Accounts (IRSA)
+   - Requires EKS with OIDC provider
+   - Best practice for production environments
+3. **Node Role (Simple but Less Secure)**
+   - Uses the EKS node's IAM role
+   - Requires adding Lambda permissions to node role
+   - Not recommended for production
 
 ## Setup
 
