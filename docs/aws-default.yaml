@@ -39,10 +39,8 @@ metadata:
   name: lambda-backend
   namespace: gwtest
 spec:
-  type: aws
+  type: AWS
   aws:
-    # Note, no spec.aws.auth is specified, so the default AWS auth will be used.
-    # If I have to manually add the right lambda roles to the node role to make this work.
     accountId: "${AWS_ACCOUNT_ID}"
     lambda:
       functionName: "tim-test"
