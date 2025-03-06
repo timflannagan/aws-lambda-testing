@@ -163,20 +163,18 @@ kubectl delete secret aws-creds -n gwtest
 kubectl delete ns gwtest
 ```
 
-### Authentication Method 2: Node Roles
+### Authentication Method 2: Node Group Role
 
-> TODO: Do I need to do this for each node role?
+This method uses the EKS node group's IAM role to authenticate with AWS services. This is the simplest method but requires granting permissions to all nodes in the cluster.
 
-This method uses the EKS node's IAM role to authenticate with AWS services. This is the simplest method but requires granting permissions to all nodes in the cluster.
-
-1. Get the Node Role Name
+1. Get the Node Instance Role
 
 ```bash
-export NODE_ROLES=$(aws iam list-roles --query 'Roles[?contains(RoleName, `NodeInstanceRole`)].RoleName' --output text)
-echo "Node roles: $NODE_ROLES"
+export NODE_ROLE_NAME=$(aws iam list-roles --no-cli-pager --query "Roles[?contains(RoleName, 'NodeInstanceRole') && contains(RoleName, '${AWS_CLUSTER_NAME}')].RoleName" --output text)
+echo "Node role: $NODE_ROLE_NAME"
 ```
 
-2. Add Lambda Invoke Permissions to the EKS node role
+2. Add Lambda Invoke Permissions to the EKS Node Instance Role
 
 ```bash
 export AWS_POLICY_NAME=kgateway-lambda-node-policy
