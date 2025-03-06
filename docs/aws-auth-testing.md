@@ -488,7 +488,9 @@ Then you can get the config dump from the local port:
 curl http://localhost:19000/config_dump
 ```
 
-If the configuration is not what you expect, you can try to bump the log level:
+If the configuration is not what you expect, you can try to bump the log level. There's two ways to do this:
+
+1. Update the GatewayParameters resource
 
 ```bash
 cat <<EOF | kubectl apply -f -
@@ -522,4 +524,11 @@ spec:
       namespaces:
         from: All
 EOF
+```
+
+2. Update the Envoy config directly
+
+```bash
+kubectl -n gwtest port-forward deploy/http-gw 19000:19000 &
+curl -X POST "localhost:19000/logging?level=debug"
 ```
