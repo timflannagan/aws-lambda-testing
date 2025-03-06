@@ -17,14 +17,14 @@ Here's a summary of the three authentication methods available:
    - Uses AWS credentials stored in a Kubernetes secret
    - Good for testing and non-EKS environments
    - Not recommended for production
-2. **Pod Identity (Recommended for Production)**
+2. **Node Group Role (Simple but Less Secure)**
+   - Uses the EKS node group's IAM role
+   - Requires adding Lambda permissions to node group role
+   - Not recommended for production
+3. **Pod Identity (Recommended for Production)**
    - Uses IAM Roles for Service Accounts (IRSA)
    - Requires EKS with OIDC provider
    - Best practice for production environments
-3. **Node Role (Simple but Less Secure)**
-   - Uses the EKS node's IAM role
-   - Requires adding Lambda permissions to node role
-   - Not recommended for production
 
 ## Known Limitations
 
@@ -153,7 +153,6 @@ kubectl -n gwtest create secret generic aws-creds \
 3. Apply the CRs
 
 ```bash
-export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 envsubst < docs/aws-static.yaml | kubectl apply -f -
 ```
 
