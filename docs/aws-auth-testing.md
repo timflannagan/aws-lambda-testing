@@ -190,7 +190,7 @@ Choose the authentication method based on your security requirements and operati
 
 ### IRSA (via EKS)
 
-0. Install eksctl
+1. Optional: Install eksctl
 
     ```bash
     ARCH=amd64
@@ -206,30 +206,39 @@ Choose the authentication method based on your security requirements and operati
     sudo mv /tmp/eksctl /usr/local/bin
     ```
 
-1. Create an EKS cluster
+2. Optional: Configure AWS credentials
+
+    ```bash
+    aws configure
+    ```
+
+3. Create an EKS cluster
 
     ```bash
    eksctl create cluster \
-      --name kgateway-test \
+      --name kgateway-lambda-test \
       --region us-east-1 \
       --version 1.31 \
       --nodegroup-name standard-workers \
       --node-type t3.medium \
-      --nodes 2
+      --nodes 2 \
+      --tags developer=tim
     ```
 
-2. Associate the OIDC provider with the cluster
+4. Associate the OIDC provider with the cluster
 
     ```bash
-    eksctl utils --region us-east-1 associate-iam-oidc-provider \
-      --cluster lambda-cluster \
+    eksctl utils associate-iam-oidc-provider \
+      --region us-east-1 \
+      --cluster kgateway-lambda-test \
       --approve
     ```
 
-3. Create a policy for the lambda invoker role
+5. Create a policy for the lambda invoker role
 
     ```bash
     aws iam create-policy \
+      --tags Key=developer,Value=tim \
       --policy-name lambda-invoker-policy \
       --policy-document '{
         "Version": "2012-10-17",
@@ -246,14 +255,24 @@ Choose the authentication method based on your security requirements and operati
       }'
     ```
 
-4. Create a role for the lambda invoker
+6. Create a role for the lambda invoker
+
+    Add the following env vars to your shell
 
     ```bash
+    export AWS_CLUSTER_NAME=kgateway-lambda-test
+    export AWS_ROLE_NAME=kgateway-lambda-invoker-role
     export AWS_REGION=us-east-1
-    export OIDC_PROVIDER=$(aws eks describe-cluster --name kgateway-test --query "cluster.identity.oidc.issuer" --output text | sed -e "s/^https:\/\///")
+    export OIDC_PROVIDER=$(aws eks describe-cluster --name $AWS_CLUSTER_NAME --query "cluster.identity.oidc.issuer" --output text | sed -e "s/^https:\/\///")
     export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+    ```
+
+    Create the role
+
+    ```bash
     aws iam create-role \
-      --role-name lambda-invoker-role \
+      --tags Key=developer,Value=tim \
+      --role-name $AWS_ROLE_NAME \
       --assume-role-policy-document '{
         "Version": "2012-10-17",
         "Statement": [
@@ -273,79 +292,86 @@ Choose the authentication method based on your security requirements and operati
       }'
     ```
 
-5. Attach the policy to the role
+7. Attach the policy to the role
 
     ```bash
     aws iam attach-role-policy \
-      --role-name lambda-invoker-role \
+      --role-name $AWS_ROLE_NAME \
       --policy-arn arn:aws:iam::${AWS_ACCOUNT_ID}:policy/lambda-invoker-policy
     ```
 
-6. Create ECR repositories
-
-    ```bash
-    aws ecr create-repository --repository-name kgateway/controller --no-cli-pager
-    aws ecr create-repository --repository-name kgateway/envoy-wrapper --no-cli-pager
-    aws ecr create-repository --repository-name kgateway/sds --no-cli-pager
-    ```
-
-7. Login to ECR
-
-    ```bash
-    aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com
-    ```
-
-8. Build and publish custom KG images to ECR
-
-    ```bash
-    make release IMAGE_REGISTRY=${ECR_REGISTRY}/kgateway CONTROLLER_IMAGE_REPO=controller ENVOYINIT_IMAGE_REPO=envoy-wrapper VERSION=${VERSION} GORELEASER_ARGS="--clean --skip=validate"
-    ```
-
-9. Install KGateway with custom values
-
-    ```bash
-    helm upgrade -i kgateway oci://ghcr.io/kgateway-dev/charts/kgateway \
-      --create-namespace \
-      --namespace kgateway-system \
-      --version v2.0.0-main \
-      --set image.registry=${ECR_REGISTRY}/kgateway \
-      --set image.tag=${VERSION}-amd64 \
-      --set image.pullPolicy=Always \
-      --set controller.image.repository=controller \
-      --set controller.image.pullPolicy=Always \
-      --set gateway.envoyContainer.image.repository=envoy-wrapper
-    ```
-
-10. Override KG CRDs
-
-    Avoid publishing a custom helm chart for this, so we'll just override the CRDs directly.
-
-    ```bash
-    kubectl apply -f install/helm/kgateway/crds
-    ```
-
-11. Deploy GW API CRs
+8. Deploy the Kubernetes Gateway API CRDs
 
     ```bash
     kubectl apply --kustomize "https://github.com/kubernetes-sigs/gateway-api/config/crd/experimental?ref=v1.2.1"
     ```
 
-12. Apply the GW API CRs
+9. Development: Build and publish custom KG images to your own registry
 
     ```bash
-    kubectl apply -f docs/aws-irsa.yaml
+    # Login to your registry
+    docker login ghcr.io -u timflannagan --password $(echo $GITHUB_TOKEN)
+    # Build and publish the images
+    make release IMAGE_REGISTRY=ghcr.io/timflannagan VERSION="v2.0.0-lambda" GORELEASER_ARGS="--clean --skip=validate"
+    # Build and publish the helm chart
+    make package-kgateway-chart VERSION=v2.0.0-lambda
+    helm push _test/kgateway-v2.0.0-lambda.tgz oci://ghcr.io/timflannagan/charts
     ```
 
-13. Verify the AWS_* env vars are set correctly
+10. Deployment: Install KG with custom values
 
     ```bash
-    kubectl -n gwtest get $(k -n gwtest get po -l app.kubernetes.io/instance=http-gw -o name) -o jsonpath='{.spec.containers[0].env}' | grep AWS_
+    helm upgrade -i kgateway oci://ghcr.io/timflannagan/charts/kgateway \
+      --create-namespace \
+      --namespace kgateway-system \
+      --version v2.0.0-lambda \
+      --set image.registry=ghcr.io/timflannagan \
+      --set image.tag=v2.0.0-lambda-amd64 \
+      --set image.pullPolicy=Always
+    ```
+
+11. Optional: Validate the installation
+
+    ```bash
+    # verify the GC was reconciled by the controller
+    kubectl -n kgateway-system get gatewayclass kgateway -o jsonpath='{.status.conditions[?(@.type=="Accepted")]}'
+    # verify the GW was reconciled by the controller
+    kubectl -n gwtest get gateway http-gw -o jsonpath='{.status.conditions[?(@.type=="Accepted")].status}'
+    ```
+
+12. Apply example KG CRs to test IRSA
+
+    Deploy the CRs
+
+    ```bash
+    envsubst < docs/aws-pod-identity.yaml | kubectl apply -f -
+    ```
+
+13. Optional: Verify the installation
+
+    Verify the Gateway was accepted
+
+    ```bash
+    kubectl -n gwtest get gateway http-gw -o jsonpath='{.status.conditions[?(@.type=="Accepted")]}'
+    ```
+
+    Verify the Envoy proxy is running
+
+    ```bash
+    kubectl -n gwtest get po -l app.kubernetes.io/instance=http-gw
+    ```
+
+    Verify the AWS_* env vars are set correctly
+
+    ```bash
+    kubectl -n gwtest get $(kubectl -n gwtest get po -l app.kubernetes.io/instance=http-gw -o name) -o jsonpath='{.spec.containers[0].env}' | grep AWS_
     ```
 
 14. Verify routing to lambda backend works
 
     ```bash
-    curl -X POST http://${LOAD_BALANCER_ADDR}:8080/lambda \
+    export LOAD_BALANCER_ADDR=$(kubectl -n gwtest get svc http-gw -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+    curl -X POST http://$LOAD_BALANCER_ADDR:8080/lambda \
       -H "Host: www.example.com" \
       -H "Content-Type: application/json" \
       -d '{"name": "Tim"}'
@@ -369,14 +395,6 @@ Choose the authentication method based on your security requirements and operati
     export AWS_REGION=us-east-1
     export OIDC_PROVIDER=$(aws eks describe-cluster --name kgateway-test --query "cluster.identity.oidc.issuer" --output text | sed -e "s/^https:\/\///")
     export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-    ```
-
-    Delete the ECR repositories if you're done with the testing.
-
-    ```bash
-    aws ecr delete-repository --repository-name kgateway/controller --force
-    aws ecr delete-repository --repository-name kgateway/envoy-wrapper --force
-    aws ecr delete-repository --repository-name kgateway/sds --force
     ```
 
     Delete the OIDC provider if you're done with the testing.
