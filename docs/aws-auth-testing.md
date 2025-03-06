@@ -26,6 +26,14 @@ Here's a summary of the three authentication methods available:
    - Requires adding Lambda permissions to node role
    - Not recommended for production
 
+## Known Limitations
+
+- Adding extra environment variables to the deployed Envoy proxy is not supported. This prevents users from configuring a GatewayParameters resource with the AWS_* credential environment variables.
+- Adding extra volumes to the deployed Envoy proxy is not supported. This prevents users from mounting the AWS_WEB_IDENTITY_TOKEN_FILE or AWS_SHARED_CREDENTIALS_FILE.
+- Having the control plane make API calls to assume a role and return temporary credentials is not supported.
+
+See <https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/aws_lambda_filter> for list of supported authentication methods that Envoy supports.
+
 ## Setup
 
 The following steps are required to setup the EKS cluster and deploy the KG project.
